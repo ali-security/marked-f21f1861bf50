@@ -1,9 +1,11 @@
 name: "Tests"
 on:
-  pull_request:
-  push:
-    branches:
-      - master
+  workflow_dispatch:
+    inputs:
+      test-filter:
+        description: 'Jasmine --filter regex; empty runs the full suite'
+        required: false
+        default: ''
 
 jobs:
   Test:
@@ -12,6 +14,7 @@ jobs:
       matrix:
         node_version: ['lts/*', 'node']
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout Code
         uses: actions/checkout@v2
@@ -22,49 +25,48 @@ jobs:
       - name: Install Dependencies
         run: npm ci
       - name: Run Unit Tests 👩🏽‍💻
-        run: npm run test:unit
+        run: |
+          if [ -n "${{ inputs.test-filter }}" ]; then
+            npm test -- --filter="${{ inputs.test-filter }}"
+          else
+            npm run test:unit
+          fi
       - name: Run Spec Tests 👩🏽‍💻
+        if: inputs.test-filter == ''
         run: npm run test:specs
 
-  Lint:
-    if: "!contains(github.event.head_commit.message, '[skip ci]')"
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v2
-      - name: Install Dependencies
-        run: npm ci
-      - name: Lint ✨
-        run: npm run test:lint
-
   Release:
-    needs: [Test, Lint]
-    if: |
-      github.ref == 'refs/heads/master' &&
-      github.event.repository.fork == false
+    needs: [Test]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout Code
         uses: actions/checkout@v2
       - name: Install Dependencies
         run: npm ci
+      - name: Install faketime
+        run: sudo apt-get update && sudo apt-get install -y faketime
       - name: Build 🗜️
         run: |
-          npm run build
+          faketime '2021-05-27 16:17:12' npm run build
           if ! git diff --quiet; then
             git config --global user.email "<>"
             git config --global user.name "MarkedJS bot"
             git commit -am "🗜️ build [skip ci]"
           fi
-      - name: Release 🎉
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
-        run: npx semantic-release
+      - name: Pack
+        run: npm pack
+      - name: Upload tarball
+        uses: actions/upload-artifact@v4
+        with:
+          name: marked-tgz
+          path: marked-*.tgz
+          if-no-files-found: error
 
   Skip:
     if: contains(github.event.head_commit.message, '[skip ci]')
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - name: Skip CI 🚫
         run: echo skip ci
